@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+function usage {
+cat >&2 <<EOF
+Usage: install-nixos [OPTIONS]
+
+Install NixOS on (virtual) machine
+
+Options:
+  -m, --machine=machine  Name of target machine, required
+  -u, --user=user        Name of target user, required
+  -y, --yubikey          Unlock LUKS with yubikey, optional
+  -h, --help             Show this help
+EOF
+}
+
+if (( $EUID != 0 )); then
+  echo "Please run $0 as root"
+  exit 1
+fi
+
+WYVERN_DIR=$(readlink -f $0 | xargs dirname)
+export VAULT_DIR=$WYVERN_DIR/vault
+export VAULT_KEY=$VAULT_DIR/wyvern.key.age
+export TEMPLATE_DIR=$WYVERN_DIR/templates
+export LUKS_YUBIKEY='N'
+
+# Get CLI options
+opts=$(getopt --options "m:u:yh" --long "machine:,user:,yubikey,help" -- "$@")
+
+# Inspect CLI options
+eval set -- "$opts"
+while true; do
+  case $1 in
+    -m|--machine)
+      export TARGET_MACHINE=$2
+      shift 2
+    ;;
+    -u|--user)
+      export TARGET_USER=$2
+      shift 2
+    ;;
+    -y|--yubikey)
+      export LUKS_YUBIKEY='Y'
+      shift
+    ;;
+    -h|--help)
+      usage
+      exit 0
+    ;;
+    --)
+      shift
+      break
+    ;;
+    *)
+      echo -e "Unhandled option '$1'"
+      exit 2
+    ;;
+  esac
+done
+
+cd $WYVERN_DIR
+rm -f flake.lock
+
+echo "Installing SSH host keys for: ${TARGET_MACHINE:?} from ${VAULT_DIR:?}/$TARGET_MACHINE.tar.age, decrypted using yubikey (please long press when asked for passphrase)"
+echo
+
+nix --experimental-features "nix-command flakes" develop $WYVERN_DIR#run-ssh-patcher
+
+echo
+echo "Pulling latest installer flake..."
+git pull --rebase
+
+echo
+echo "Install NixOS..."
+echo "  - For host ${TARGET_MACHINE:?} with SSH host key from ${VAULT_DIR:?}/$TARGET_MACHINE.tar.age"
+echo "  - For user ${TARGET_USER:?} with SSH key from ${VAULT_DIR:?}/$TARGET_USER.tar.age"
+echo
+
+# Start installation
+nix --experimental-features "nix-command flakes" develop $WYVERN_DIR#run-installer
