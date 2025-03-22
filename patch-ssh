@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+function usage {
+cat >&2 <<EOF
+Usage: patch-ssh [OPTIONS]
+
+Restore SSH keys from encrypted storage
+
+Options:
+  -m, --machine=name Name of host
+  -v, --vault=path   Path to SSH key vault
+  -k, --key=file     File used as decryption key
+  -h, --help         Show this help
+EOF
+}
+
+if (( $EUID != 0 )); then
+  echo "Please run $0 as root"
+  exit 1
+fi
+
+# Get CLI options
+opts=$(getopt --options "m:k:v:h" --long "machine:,key:,vault:,help" -- "$@")
+
+# Inspect CLI options
+eval set -- "$opts"
+while true; do
+  case $1 in
+    -k|--key)
+      export VAULT_KEY=$2
+      shift 2
+    ;;
+    -m|--machine)
+      export TARGET_MACHINE=$2
+      shift 2
+    ;;
+    -v|--vault)
+      export VAULT_DIR=$2
+      shift 2
+    ;;
+    -h|--help)
+      usage
+      exit 0
+    ;;
+    --)
+      shift
+      break
+    ;;
+    *)
+      echo -e "Unknown option '$1'"
+      exit 2
+    ;;
+  esac
+done
+
+# Sanity check
+echo "Installing SSH host keys for: ${TARGET_MACHINE:?} from ${VAULT_DIR:?}/$TARGET_MACHINE.tar.age, decrypted using age key: ${VAULT_KEY:?}"
+echo
+WYVERN_DIR=$(readlink -f $0 | xargs dirname)
+nix --experimental-features "nix-command flakes" develop $WYVERN_DIR#run-ssh-patcher
